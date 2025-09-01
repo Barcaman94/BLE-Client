@@ -80,26 +80,49 @@ class BluetoothDataTransferService(
             if (!socket.isConnected) return@launch
 
             val reader = BufferedReader(InputStreamReader(socket.inputStream))
+            val buffer = StringBuilder()
+            var openBraces = 0
+            var openBrackets = 0
 
             try {
                 while (true) {
-                    val line = reader.readLine() ?: break
-                    Log.d("BluetoothDataTransferService", "Received raw: $line")
-                    _results.emit(line.toBluetoothMessage(isFromLocalUser = false))
+                    val ch = reader.read() ?: break
+                    buffer.append(ch.toChar())
+
+                    when (ch.toChar()) {
+                        '{' -> openBraces++
+                        '}' -> openBraces--
+                        '[' -> openBrackets++
+                        ']' -> openBrackets--
+                    }
+
+                    if (openBraces == 0 && openBrackets == 0 && buffer.isNotBlank()) {
+                        val content = buffer.toString().trim()
+
+                        if (content.startsWith("{") || content.startsWith("[")) {
+                            _results.emit(content.toBluetoothMessage(isFromLocalUser = false))
+                            Log.d("BluetoothClient", "Received JSON: $content")
+                        } else {
+                            Log.d("BluetoothClient", "Ignored non-JSON fragment: $content")
+                        }
+
+                        buffer.clear()
+                    }
                 }
             } catch (e: IOException) {
-                Log.d("BluetoothDataTransferService", "Connection lost: ${e.message}")
+                Log.d("BluetoothClient", "Connection lost: ${e.message}")
             } finally {
-                Log.d("BluetoothDataTransferService", "Client closed connection")
+                Log.d("BluetoothClient", "Client closed connection")
             }
         }
     }
-
 
     suspend fun sendMessage(bytes: ByteArray): Boolean {
         return withContext(Dispatchers.IO) {
             try {
                 socket.outputStream.write(bytes)
+                socket.outputStream.write("\n".toByteArray())
+                socket.outputStream.flush()
             } catch (e: IOException) {
                 e.printStackTrace()
                 return@withContext false
